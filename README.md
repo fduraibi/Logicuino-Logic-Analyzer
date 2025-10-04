@@ -1,13 +1,14 @@
 # 🔬 Logicuino – Arduino-Based Logic Analyzer
 
 Logicuino is a lightweight **logic analyzer** built on an **Arduino Uno / ATmega328P**.  
-It samples up to **8 digital input channels (Pins D2–D9)** at a fixed rate using **Timer1**,  
+It samples up to **6 digital input channels (Pins D2–D7)** at a fixed rate using **Timer1**,  
 stores them in a **circular buffer in RAM**, and streams the data via **UART** for visualization.  
 
 ---
 
 ## ✨ Features
-- **8 input channels** (Pins 2–9 = Channels 1–8)  
+- **6 input channels** (Pins 2–7 = Channels 1–6)  
+- **2 bits for syncronization** with the viewer
 - **Fixed sampling rate** using Timer1 interrupt  
 - **Circular buffer** to handle continuous data acquisition  
 - **High-speed UART streaming** (up to 1 Mbps)  
@@ -39,14 +40,12 @@ stores them in a **circular buffer in RAM**, and streams the data via **UART** f
 | CH4     | D5          | PD5        |
 | CH5     | D6          | PD6        |
 | CH6     | D7          | PD7        |
-| CH7     | D8          | PB0        |
-| CH8     | D9          | PB1        |
 
 Each captured sample is a **single byte**, where:  
 - **Bit0 → CH1 (D2)**  
 - **Bit1 → CH2 (D3)**  
 - …  
-- **Bit7 → CH8 (D9)**  
+- **Bit5 → CH6 (D7)**  
 
 ---
 
@@ -72,7 +71,7 @@ Viewer repo: [Logicuino Python Viewer](https://github.com/fduraibi/Logic-Analyze
 
 ## ⚠️ Notes & Limitations
 - The **UART speed** and **sample rate** are tightly linked:  
-  - Example: at 1 Mbps baud, ~80 kHz sample rate with 8 channels seems to be stable  
+  - Example: at 1 Mbps baud, ~80 kHz sample rate with 6 channels seems to be stable  
   - Higher sample rates may drop data if serial can’t keep up  
   - This is intended for hobbiest, results are not guarantered to be correct.
 - Only **0–5V logic** is supported (direct to Arduino pins)  

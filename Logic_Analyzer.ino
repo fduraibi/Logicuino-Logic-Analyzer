@@ -1,76 +1,109 @@
 /*
-  By Fahad Alduraibi
-  2025
-  Version: 1.0
+  Author: Fahad Alduraibi
+  Version: 1.1 (2025)
   Logicuino - Arduino Logic analyzer
-  using an Arduino (ATmega328P) board
-  Pins 2–9 are used as Channels 1-7
-  - Uses Timer1 for fixed sampling rate
-  - Uses circular buffer in RAM
-  - Sends data via hardware UART
+  using an Arduino (ATmega328P) board.
+
+  Features:
+  - 6 digital channels on pins 2–7 (PD2–PD7)
+  - Top 2 bits = 2-bit rolling counter (0..3) for sync
+  - Fixed sample rate via Timer1 CTC mode
+  - Circular buffer for captured samples
+  - Direct UART register writes for high-speed TX
+
+  Notes:
+  - BUFFER_SIZE must be power of 2
+  - BAUD_RATE must be high enough to keep up with SAMPLE_RATE
 */
 
-#define SAMPLE_RATE 80000    // samples per second (80 kHz)
-#define BAUD_RATE   1000000   // UART baud rate
-#define BUFFER_SIZE 1024      // must be power of 2 (e.g., 256, 512)
+#define SAMPLE_RATE 100000  // samples per second (Hz)
+/*
+  If using the origianl Arduino Uno with 'ATmega16U2' as 
+  Serial-to-USB emulator I found that 70KHz is a safe value
+  with few dropped samples, higher values as not stable.
+
+  However, if the board has other converters such as
+  'CH340G' then a faster speed might be possible.
+
+  When testing CH340G, a rate of 100KHz was not missing any sample.
+*/
+#define BAUD_RATE 1000000  // UART baud rate
+#define BUFFER_SIZE 1024   // must be power of 2 (e.g., 256, 512)
+
+uint8_t buffer[BUFFER_SIZE];
 
 // declared these as 'volatile' since they are accessed by the interrupt
-volatile uint8_t buffer[BUFFER_SIZE];
 volatile uint16_t head = 0;
 volatile uint16_t tail = 0;
+volatile uint8_t sample_counter = 0;  // A counter to enhance packet syncronization with the viewer
 
-void setup() {
-  // Configure pins 2–9 as input
-  DDRD &= ~0b11111100;  // PD2–PD7 input
-  DDRB &= ~0b00000011;  // PB0–PB1 input
+// --- UART Init ---
+void uart_init() {
+  uint16_t ubrr = (F_CPU / (16UL * BAUD_RATE)) - 1;
+  UBRR0H = (ubrr >> 8) & 0xFF;
+  UBRR0L = ubrr & 0xFF;
+  UCSR0B = (1 << TXEN0);                       // TX enable only
+  UCSR0C = (1 << UCSZ01) | (1 << UCSZ00);      // 8N1
+}
 
-  Serial.begin(BAUD_RATE);
+// --- UART Write (direct register) ---
+inline void uart_write(uint8_t d) {
+  while (!(UCSR0A & (1 << UDRE0))); // wait until ready
+  UDR0 = d;
+}
 
-  // --- Timer1 setup ---
+// --- Timer1 Init for fixed sampling ---
+void timer1_init(uint32_t rate) {
   noInterrupts();
   TCCR1A = 0;
   TCCR1B = 0;
 
-  // Compare value for fixed sample rate
   uint16_t prescaler = 8;
-  OCR1A = (F_CPU / (prescaler * SAMPLE_RATE)) - 1;
+  OCR1A = (F_CPU / (prescaler * rate)) - 1;
 
   TCCR1B |= (1 << WGM12);   // CTC mode
   TCCR1B |= (1 << CS11);    // prescaler = 8
-  TIMSK1 |= (1 << OCIE1A);  // enable compare match interrupt
+  TIMSK1 |= (1 << OCIE1A);  // enable compare interrupt
   interrupts();
 }
 
 /* The interrupt routine:
-1- Read the two port register (we need 8 bits = 8 digital inputs)
-    The atmega does not have one port register with 8 usable pins, so we have to use two ports.
-    * Port D has 8pins but pin 0 & 1 are used for Serial Rx & Tx, which we are using to transmit.
+1- Read the port register (we need 6 bits = 6 digital inputs) and shift it into 'value'
 
-2- Mask and Shift the needed bits into the variable 'value'
-    6 bits from port D, and two bits from port B
+2- Shift in the counter two bits
 
 3- Push the value into the circular buffer (to be read in the loop function)
 */
 ISR(TIMER1_COMPA_vect) {
-  uint8_t portD = PIND;   // read PORTD (pins 0–7)
-  uint8_t portB = PINB;   // read PORTB (pins 8–13)
+  // Read PD2–PD7, shift into bits 0..5
+  uint8_t value = (PIND >> 2) & 0x3F;
 
-  // Pack PD2–PD7 (bits 2–7) and PB0–PB1 (bits 0–1) into one byte
-  uint8_t value = (portD & 0b11111100) >> 2;  // PD2..PD7 -> bits 0..5
-  value |= (portB & 0b00000011) << 6;         // PB0..PB1 -> bits 6..7
+  // Add counter in bits 6–7
+  value |= (sample_counter & 0x03) << 6;
 
-  // Push to buffer (lock-free, single producer/consumer)
-  uint16_t nextHead = (head + 1) & (BUFFER_SIZE - 1);
-  if (nextHead != tail) {
+  // Push to circular buffer
+  uint16_t next = (head + 1) & (BUFFER_SIZE - 1);
+  if (next != tail) {
     buffer[head] = value;
-    head = nextHead;
+    head = next;
   }
+
+  // Increment counter mod 4
+  sample_counter = (sample_counter + 1) & 0x03;
 }
 
-// Just read the available data from the buffer and send it over serial
+void setup() {
+  // Set Pins 2–7 as input
+  DDRD &= ~0b11111100;
+
+  uart_init();
+  timer1_init(SAMPLE_RATE);
+}
+
+// Read the available data from the buffer and send it over serial
 void loop() {
   while (tail != head) {
-    Serial.write(buffer[tail]);
+    uart_write(buffer[tail]);
     tail = (tail + 1) & (BUFFER_SIZE - 1);
   }
 }
